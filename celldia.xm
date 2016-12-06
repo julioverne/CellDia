@@ -52,17 +52,14 @@ static inline CGRect Retina(CGRect value) {
 		[clampFilter setValue:inputImage forKeyPath:kCIInputImageKey];
 		[clampFilter setValue:[NSValue valueWithBytes:&transform objCType:@encode(CGAffineTransform)] forKeyPath:@"inputTransform"];
 		CIImage *clampedImage = [clampFilter outputImage];
-		//Next, create some darkness
 		CIFilter* blackGenerator = [CIFilter filterWithName:@"CIConstantColorGenerator"];
 		CIColor* black = [CIColor colorWithRed:0.0f green:0.0f blue:0.0f alpha:0.5f];
 		[blackGenerator setValue:black forKey:@"inputColor"];
 		CIImage* blackImage = [blackGenerator valueForKey:@"outputImage"];
-		//Apply that black
 		CIFilter *compositeFilter = [CIFilter filterWithName:@"CIMultiplyBlendMode"];
 		[compositeFilter setValue:blackImage forKey:@"inputImage"];
 		[compositeFilter setValue:clampedImage forKey:@"inputBackgroundImage"];
 		CIImage *darkenedImage = [compositeFilter outputImage];
-		//Third, blur the image
 		CIFilter *blurFilter = [CIFilter filterWithName:@"CIGaussianBlur"];
 		[blurFilter setDefaults];
 		[blurFilter setValue:@(12.0f) forKey:@"inputRadius"];
@@ -87,7 +84,6 @@ static inline CGRect Retina(CGRect value) {
 		CGImageRef masked = CGImageCreateWithMask([blurredAndDarkenedImage CGImage], mask);
 		UIImage* invertMask = [UIImage imageWithCGImage:masked];
 		[invertMask drawInRect:CGRectMake(imgSize.width/3, 0, imgSize.width/1.5, imgSize.height/1.5)];
-		
 		CGContextRef context = UIGraphicsGetCurrentContext();
 		CGPoint point = CGPointMake(imgSize.width/1.4, imgSize.height/20);
 		CGContextSaveGState(context);
@@ -162,6 +158,59 @@ NSString *bytesFormat(long bytes)
 static __strong NSString* kSize = @"Size";
 static __strong NSString* kInfoFormat = @"%@ • %@";
 
+
+%hook PackageListController
+- (UITableViewCell *) tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+	UITableViewCell* cell = %orig;
+	if(cell) {
+		if(UIView* oldBT = [cell viewWithTag:6656]) {
+			[oldBT removeFromSuperview];
+		}
+		UIView* contentBT = [UIView new];
+		contentBT.frame = CGRectMake(0,0,60,23);
+		contentBT.tag = 6656;
+		SKUIItemOfferButton*ButtonInstall = [%c(SKUIItemOfferButton) itemOfferButtonWithAppearance:nil];
+		[ButtonInstall addTarget:self action:@selector(intPress:) forControlEvents:UIControlEventTouchUpInside];
+		if (Package* myPackage = (Package*)[self packageAtIndexPath:indexPath]) {
+			[ButtonInstall setTitle:[[NSBundle mainBundle] localizedStringForKey:[myPackage uninstalled]?@"INSTALL":[myPackage upgradableAndEssential:NO]?@"UPGRADE":@"REMOVE" value:nil table:nil]];
+		}
+		[ButtonInstall setBackgroundColor:[UIColor whiteColor]];
+		[ButtonInstall setProgressType:0];
+		[ButtonInstall setFrame:CGRectMake(0,0,60,23)];
+		[contentBT addSubview:ButtonInstall];
+		
+		[contentBT setTranslatesAutoresizingMaskIntoConstraints:NO];
+		[cell addSubview:contentBT];
+		
+		NSDictionary *viewDict = @{@"contentBT" : contentBT};
+		[cell addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|-24-[contentBT]-0-|" options:NSLayoutFormatDirectionLeftToRight metrics:nil views:viewDict]];
+		[cell addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[contentBT]-26-|" options:NSLayoutFormatDirectionLeftToRight metrics:nil views:viewDict]];
+		[contentBT addConstraint:[NSLayoutConstraint constraintWithItem:contentBT attribute:NSLayoutAttributeWidth relatedBy:NSLayoutRelationEqual toItem:contentBT attribute:NSLayoutAttributeHeight multiplier:1.0 constant:0.0]];
+	}
+	return cell;
+}
+%new
+- (void)intPress:(UIView*)sender
+{
+	if(sender&&[sender respondsToSelector:@selector(superview)]) {
+		UITableViewCell* cell = (UITableViewCell*)[[sender superview] superview];
+		if(UITableView *tableHere = (UITableView *)object_getIvar(self, class_getInstanceVariable([self class], "list_"))) {
+			NSIndexPath* indexPath = [tableHere indexPathForCell:cell];
+			if (Package* myPackage = (Package*)[self packageAtIndexPath:indexPath]) {
+				if([myPackage uninstalled] || [myPackage upgradableAndEssential:NO]) {
+					[myPackage install];
+				} else {
+					[myPackage remove];
+				}				
+				[(Cydia*)[[UIApplication sharedApplication] delegate] resolve];
+				[(Cydia*)[[UIApplication sharedApplication] delegate] queue];
+			}
+		}			
+	}
+}
+%end
+
 %hook PackageCell
 %property (nonatomic,retain) id info_;
 - (void) setPackage:(Package *)package asSummary:(bool)summary
@@ -171,11 +220,16 @@ static __strong NSString* kInfoFormat = @"%@ • %@";
 		long sizeBytes = 0;
 		@try {
 			sizeBytes = [[package getField:kSize] intValue];
-		} @catch (NSException * e) {	
+		} @catch (NSException * e) {
+			@try {
+				sizeBytes = [package size];
+			} @catch (NSException * e) {
+			}
 		}
-		self.info_ = [NSString stringWithFormat:kInfoFormat, [package latest], bytesFormat(sizeBytes)];
+		self.info_ = [NSString stringWithFormat:kInfoFormat, [package latest], bytesFormat(sizeBytes)];		
 	}
 }
+
 - (void) drawNormalContentRect:(CGRect)rect
 {
 	bool highlighted_ = (bool)object_getIvar(self, class_getInstanceVariable([self class], "highlighted_"));
@@ -186,6 +240,8 @@ static __strong NSString* kInfoFormat = @"%@ • %@";
 	NSString* name_ = (NSString *)object_getIvar(self, class_getInstanceVariable([self class], "name_"));
 	NSString* source_ = (NSString *)object_getIvar(self, class_getInstanceVariable([self class], "source_"));
 	NSString* description_ = (NSString *)object_getIvar(self, class_getInstanceVariable([self class], "description_"));
+	
+	placard_ = nil;
 	
     bool highlighted(highlighted_);
     float width([self bounds].size.width);
@@ -201,7 +257,7 @@ static __strong NSString* kInfoFormat = @"%@ • %@";
         rect.origin.y = 36 - rect.size.height / 2;
         [icon_ drawInRect:Retina(rect)];
     }
-
+	
     if (badge_ != nil) {
         CGRect rect;
         rect.size = [(UIImage *) badge_ size];
@@ -211,7 +267,7 @@ static __strong NSString* kInfoFormat = @"%@ • %@";
         rect.origin.y = 55 - rect.size.height / 2;
         [badge_ drawInRect:Retina(rect)];
     }
-
+	
     if (highlighted && kCFCoreFoundationVersionNumber < 800) {
 		UISetColor(White_);
 	}
@@ -221,18 +277,19 @@ static __strong NSString* kInfoFormat = @"%@ • %@";
 	}
 	
     [name_ drawAtPoint:CGPointMake(70, 8) forWidth:(width - (placard_ == nil ? 80 : 106)) withFont:FontName_ lineBreakMode:NSLineBreakByTruncatingTail];
-	[self.info_ drawAtPoint:CGPointMake(70, 23) forWidth:(width - 95) withFont:FontSource_ lineBreakMode:NSLineBreakByTruncatingTail];
-    [source_ drawAtPoint:CGPointMake(70, 35) forWidth:(width - 95) withFont:FontSource_ lineBreakMode:NSLineBreakByTruncatingTail];
+	[self.info_ drawAtPoint:CGPointMake(70, 23) forWidth:(width - 150) withFont:FontSource_ lineBreakMode:NSLineBreakByTruncatingTail];
+    [source_ drawAtPoint:CGPointMake(70, 35) forWidth:(width - 150) withFont:FontSource_ lineBreakMode:NSLineBreakByTruncatingTail];
 	
     if (!highlighted) {
 		UISetColor(commercial_ ? Purplish_ : Gray_);
 	}
 	
 	[description_ drawAtPoint:CGPointMake(70, 50) forWidth:(width - 80) withFont:FontDescription_ lineBreakMode:NSLineBreakByTruncatingTail];
-
-    if (placard_ != nil) {
+	
+	if (placard_ != nil) {
 		[placard_ drawAtPoint:CGPointMake(width - 52, 9)];
-	}        
+	}
+	
 }
 %end
 
@@ -247,7 +304,7 @@ __attribute__((constructor)) static void initialize_CyCell()
 	}
 	iconSize_ = CGSizeMake(50, 50);
 	FontSource_ = [UIFont systemFontOfSize:10];
-	FontDescription_ = [UIFont systemFontOfSize:12];
+	FontDescription_ = [UIFont systemFontOfSize:11];
 	FontName_ = [UIFont boldSystemFontOfSize:12];
 	Black_ = [[UIColor colorWithRed:0.00 green:0.00 blue:0.00 alpha:1.0] CGColor];
 	White_ = [[UIColor colorWithRed:1.00 green:1.00 blue:1.00 alpha:1.0] CGColor];

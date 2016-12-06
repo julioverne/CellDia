@@ -66,8 +66,47 @@ struct PackageValue :
 - (id)latest;
 - (PackageValue *) metadata;
 - (id)getField:(id)fp8;
+- (size_t) size;
+- (BOOL) uninstalled;
+
+- (BOOL) upgradableAndEssential:(BOOL)arg1;
+
+- (void) install;
+- (void) remove;
+@end
+
+@interface Cydia
+- (void) resolve;
+- (void) queue;
 @end
 
 @interface PackageCell : UITableViewCell
 @property (nonatomic,retain) id info_;
 @end
+
+@interface PackageListController : UIViewController
+-(id)packageAtIndexPath:(id)arg1;
+@end
+
+@interface SKUIItemOfferButton : UIControl
+
++ (id)itemOfferButtonWithAppearance:(id)arg1;
++ (id)_defaultTitleAttributes;
++ (CGSize)_titleSizeThatFitsForSize:(CGSize)arg1 titleStyle:(long long)arg2 mutableAttributedString:(id)arg3;
+
+- (void)setBackgroundColor:(id)arg1;
+- (void)setFrame:(CGRect)arg1;
+- (void)setProgressType:(long long)arg1;
+- (void)setTitle:(id)arg1;
+
+- (bool)setTitle:(id)arg1 confirmationTitle:(id)arg2 itemState:(id)arg3 clientContext:(id)arg4 animated:(bool)arg5;
+- (void)setConfirmationTitle:(id)arg1;
+- (void)setConfirmationTitleStyle:(long long)arg1;
+- (void)setTitleStyle:(long long)arg1;
+
+- (void)setShowingConfirmation:(bool)arg1 animated:(bool)arg2;
+- (void)setShowsConfirmationState:(bool)arg1;
+
+@end
+
+
