@@ -4,9 +4,12 @@
 
 extern "C" void UISetColor(CGColorRef color);
 
-static UIImage* kMaskForBlur;
-static NSString* kNew;
-static NSString* kUpdate;
+
+static __strong NSString* kNew;
+static __strong NSString* kUpdate;
+static __strong NSString* kInstall;
+static __strong NSString* kRemove;
+static __strong NSString* kNewAt;
 
 static CGSize iconSize_;
 
@@ -19,6 +22,8 @@ static CGColorRef White_;
 static CGColorRef Gray_;
 static CGColorRef Purple_;
 static CGColorRef Purplish_;
+
+static CGImageRef kMask;
 
 CGFloat ScreenScale_;
 static inline CGRect Retina(CGRect value) {
@@ -34,7 +39,7 @@ static inline CGRect Retina(CGRect value) {
     return value;
 }
 
-@implementation UIImage (CyCellImage)
+@implementation UIImage (CellDiaImage)
 + (UIImage *)imageWithImage:(UIImage *)image size:(CGSize)imgSize Radius:(float)Radius isNew:(BOOL)isNew useSash:(BOOL)useSash
 {
 	if (&UIGraphicsBeginImageContextWithOptions != NULL) {
@@ -66,22 +71,7 @@ static inline CGRect Retina(CGRect value) {
 		[blurFilter setValue:darkenedImage forKey:kCIInputImageKey];
 		CIImage *blurredImage = [blurFilter outputImage];
 		CGImageRef cgimg = [contextd createCGImage:blurredImage fromRect:inputImage.extent];
-		UIImage *blurredAndDarkenedImage = [UIImage imageWithCGImage:cgimg];
-
-		CGImageRef maskRef = kMaskForBlur.CGImage;
-		CGBitmapInfo bitmapInfo = kCGImageAlphaNone;
-		CGColorRenderingIntent renderingIntent = kCGRenderingIntentDefault;
-		CGImageRef mask = CGImageCreate(CGImageGetWidth(maskRef),
-				CGImageGetHeight(maskRef),
-				CGImageGetBitsPerComponent(maskRef),
-				CGImageGetBitsPerPixel(maskRef),
-				CGImageGetBytesPerRow(maskRef),
-				CGColorSpaceCreateDeviceGray(),
-				bitmapInfo,
-				CGImageGetDataProvider(maskRef),
-				nil, NO,
-				renderingIntent);
-		CGImageRef masked = CGImageCreateWithMask([blurredAndDarkenedImage CGImage], mask);
+		CGImageRef masked = CGImageCreateWithMask(cgimg, kMask);
 		UIImage* invertMask = [UIImage imageWithCGImage:masked];
 		[invertMask drawInRect:CGRectMake(imgSize.width/3, 0, imgSize.width/1.5, imgSize.height/1.5)];
 		CGContextRef context = UIGraphicsGetCurrentContext();
@@ -92,16 +82,9 @@ static inline CGRect Retina(CGRect value) {
 		CGContextConcatCTM(context, textTransform);
 		CGContextTranslateCTM(context, -point.x, -point.y);
 		[[UIColor whiteColor] set];
-		if(!kNew) {
-			kNew = [[NSBundle mainBundle] localizedStringForKey:@"NEW" value:@"New" table:nil];
-		}
-		if(!kUpdate) {
-			kUpdate = [[NSBundle mainBundle] localizedStringForKey:@"UPGRADE" value:@"Upgrade" table:nil];
-		}
 		[isNew?kNew:kUpdate
 		drawAtPoint:point forWidth:imgSize.height/2 withFont:[UIFont boldSystemFontOfSize:isNew?9:8]
 		fontSize:isNew?9:8 lineBreakMode:NSLineBreakByTruncatingTail baselineAdjustment:UITextAlignmentCenter];
-		
 		CGContextRestoreGState(context);
 	}
 	UIImage *newImage = UIGraphicsGetImageFromCurrentImageContext();
@@ -136,6 +119,7 @@ NSString *bytesFormat(long bytes)
 - (UIImage *)icon
 {
 	UIImage* ret = %orig;
+	@try {
 	if(ret) {
 		BOOL useSash = NO;
 		BOOL isNew = NO;
@@ -151,6 +135,8 @@ NSString *bytesFormat(long bytes)
 		}
 		ret = [UIImage imageWithImage:ret size:iconSize_ Radius:13.0f isNew:isNew useSash:useSash];
 	}
+	} @catch (NSException * e) {
+	}
 	return ret;
 }
 %end
@@ -160,45 +146,66 @@ static __strong NSString* kInfoFormat = @"%@ • %@";
 
 
 %hook PackageListController
-- (UITableViewCell *) tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
 {
-	UITableViewCell* cell = %orig;
-	if(cell) {
+	NSString* ret = %orig;
+	@try {
+	if(ret) {
+		ret = [ret stringByReplacingOccurrencesOfString:kNewAt withString:@""];
+	}
+	} @catch (NSException * e) {
+	}
+	return ret;
+}
+- (PackageCell *) tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+	PackageCell* cell = %orig;
+	@try {
+	if(cell&&[cell isKindOfClass:%c(PackageCell)]) {
 		if(UIView* oldBT = [cell viewWithTag:6656]) {
 			[oldBT removeFromSuperview];
 		}
-		UIView* contentBT = [UIView new];
-		contentBT.frame = CGRectMake(0,0,60,23);
-		contentBT.tag = 6656;
-		SKUIItemOfferButton*ButtonInstall = [%c(SKUIItemOfferButton) itemOfferButtonWithAppearance:nil];
-		[ButtonInstall addTarget:self action:@selector(intPress:) forControlEvents:UIControlEventTouchUpInside];
-		if (Package* myPackage = (Package*)[self packageAtIndexPath:indexPath]) {
-			[ButtonInstall setTitle:[[NSBundle mainBundle] localizedStringForKey:[myPackage uninstalled]?@"INSTALL":[myPackage upgradableAndEssential:NO]?@"UPGRADE":@"REMOVE" value:nil table:nil]];
+		bool summarized_ = (bool)object_getIvar(cell, class_getInstanceVariable([cell class], "summarized_"));
+		if(!summarized_) {
+			UIView* contentBT = [UIView new];
+			contentBT.frame = CGRectMake(0,0,60,23);
+			contentBT.tag = 6656;
+			SKUIItemOfferButton*ButtonInstall = [%c(SKUIItemOfferButton) itemOfferButtonWithAppearance:nil];
+			[ButtonInstall addTarget:self action:@selector(intPress:) forControlEvents:UIControlEventTouchUpInside];
+			if (Package* myPackage = (Package*)[self packageAtIndexPath:indexPath]) {
+				[ButtonInstall setTitle:[myPackage uninstalled]?kInstall:[myPackage upgradableAndEssential:YES]?kUpdate:kRemove];
+			}
+			[ButtonInstall setBackgroundColor:[UIColor whiteColor]];
+			[ButtonInstall setProgressType:0];
+			[ButtonInstall setFrame:CGRectMake(0,0,60,23)];
+			
+			//[ButtonInstall sizeToFit];
+			
+			
+			[contentBT addSubview:ButtonInstall];
+			[contentBT sizeToFit];
+			[contentBT setTranslatesAutoresizingMaskIntoConstraints:NO];
+			[cell addSubview:contentBT];
+			NSDictionary *viewDict = NSDictionaryOfVariableBindings(contentBT);
+			[cell addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|-24-[contentBT]-0-|" options:NSLayoutFormatDirectionLeftToRight metrics:nil views:viewDict]];
+			[cell addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[contentBT]-26-|" options:NSLayoutFormatDirectionLeftToRight metrics:nil views:viewDict]];
+			[contentBT addConstraint:[NSLayoutConstraint constraintWithItem:contentBT attribute:NSLayoutAttributeWidth relatedBy:NSLayoutRelationEqual toItem:contentBT attribute:NSLayoutAttributeHeight multiplier:1.0 constant:0.0]];
 		}
-		[ButtonInstall setBackgroundColor:[UIColor whiteColor]];
-		[ButtonInstall setProgressType:0];
-		[ButtonInstall setFrame:CGRectMake(0,0,60,23)];
-		[contentBT addSubview:ButtonInstall];
-		
-		[contentBT setTranslatesAutoresizingMaskIntoConstraints:NO];
-		[cell addSubview:contentBT];
-		
-		NSDictionary *viewDict = @{@"contentBT" : contentBT};
-		[cell addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"V:|-24-[contentBT]-0-|" options:NSLayoutFormatDirectionLeftToRight metrics:nil views:viewDict]];
-		[cell addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:@"H:[contentBT]-26-|" options:NSLayoutFormatDirectionLeftToRight metrics:nil views:viewDict]];
-		[contentBT addConstraint:[NSLayoutConstraint constraintWithItem:contentBT attribute:NSLayoutAttributeWidth relatedBy:NSLayoutRelationEqual toItem:contentBT attribute:NSLayoutAttributeHeight multiplier:1.0 constant:0.0]];
+	}
+	} @catch (NSException * e) {
 	}
 	return cell;
 }
 %new
 - (void)intPress:(UIView*)sender
 {
-	if(sender&&[sender respondsToSelector:@selector(superview)]) {
+	@try {
+	if(sender) {
 		UITableViewCell* cell = (UITableViewCell*)[[sender superview] superview];
 		if(UITableView *tableHere = (UITableView *)object_getIvar(self, class_getInstanceVariable([self class], "list_"))) {
 			NSIndexPath* indexPath = [tableHere indexPathForCell:cell];
 			if (Package* myPackage = (Package*)[self packageAtIndexPath:indexPath]) {
-				if([myPackage uninstalled] || [myPackage upgradableAndEssential:NO]) {
+				if([myPackage uninstalled] || [myPackage upgradableAndEssential:YES]) {
 					[myPackage install];
 				} else {
 					[myPackage remove];
@@ -207,6 +214,8 @@ static __strong NSString* kInfoFormat = @"%@ • %@";
 				[(Cydia*)[[UIApplication sharedApplication] delegate] queue];
 			}
 		}			
+	}
+	} @catch (NSException * e) {
 	}
 }
 %end
@@ -232,6 +241,8 @@ static __strong NSString* kInfoFormat = @"%@ • %@";
 
 - (void) drawNormalContentRect:(CGRect)rect
 {
+	@try {
+	
 	bool highlighted_ = (bool)object_getIvar(self, class_getInstanceVariable([self class], "highlighted_"));
 	bool commercial_ = (bool)object_getIvar(self, class_getInstanceVariable([self class], "commercial_"));
 	UIImage* icon_ = (UIImage *)object_getIvar(self, class_getInstanceVariable([self class], "icon_"));
@@ -240,8 +251,6 @@ static __strong NSString* kInfoFormat = @"%@ • %@";
 	NSString* name_ = (NSString *)object_getIvar(self, class_getInstanceVariable([self class], "name_"));
 	NSString* source_ = (NSString *)object_getIvar(self, class_getInstanceVariable([self class], "source_"));
 	NSString* description_ = (NSString *)object_getIvar(self, class_getInstanceVariable([self class], "description_"));
-	
-	placard_ = nil;
 	
     bool highlighted(highlighted_);
     float width([self bounds].size.width);
@@ -276,8 +285,12 @@ static __strong NSString* kInfoFormat = @"%@ • %@";
 		UISetColor(commercial_ ? Purple_ : Black_);
 	}
 	
-    [name_ drawAtPoint:CGPointMake(70, 8) forWidth:(width - (placard_ == nil ? 80 : 106)) withFont:FontName_ lineBreakMode:NSLineBreakByTruncatingTail];
-	[self.info_ drawAtPoint:CGPointMake(70, 23) forWidth:(width - 150) withFont:FontSource_ lineBreakMode:NSLineBreakByTruncatingTail];
+    [name_ drawAtPoint:CGPointMake(70, 8) forWidth:(width - 106) withFont:FontName_ lineBreakMode:NSLineBreakByTruncatingTail];
+	
+	if (self.info_ != nil) {
+		[self.info_ drawAtPoint:CGPointMake(70, 23) forWidth:(width - 150) withFont:FontSource_ lineBreakMode:NSLineBreakByTruncatingTail];
+	}
+	
     [source_ drawAtPoint:CGPointMake(70, 35) forWidth:(width - 150) withFont:FontSource_ lineBreakMode:NSLineBreakByTruncatingTail];
 	
     if (!highlighted) {
@@ -287,33 +300,58 @@ static __strong NSString* kInfoFormat = @"%@ • %@";
 	[description_ drawAtPoint:CGPointMake(70, 50) forWidth:(width - 80) withFont:FontDescription_ lineBreakMode:NSLineBreakByTruncatingTail];
 	
 	if (placard_ != nil) {
-		[placard_ drawAtPoint:CGPointMake(width - 52, 9)];
+		[placard_ drawAtPoint:CGPointMake(8, 47)];
 	}
 	
+	} @catch (NSException * e) {
+	}
 }
 %end
 
 
-__attribute__((constructor)) static void initialize_CyCell()
+__attribute__((constructor)) static void initialize_CellDia()
 {
-	UIScreen *screen([UIScreen mainScreen]);
-	if ([screen respondsToSelector:@selector(scale)]) {
-		ScreenScale_ = [screen scale];
-	} else {
+	@try {
+		ScreenScale_ = [[UIScreen mainScreen] scale];
+	} @catch (NSException * e) {
 		ScreenScale_ = 1;
 	}
+	
 	iconSize_ = CGSizeMake(50, 50);
+	
 	FontSource_ = [UIFont systemFontOfSize:10];
 	FontDescription_ = [UIFont systemFontOfSize:11];
 	FontName_ = [UIFont boldSystemFontOfSize:12];
+	
 	Black_ = [[UIColor colorWithRed:0.00 green:0.00 blue:0.00 alpha:1.0] CGColor];
 	White_ = [[UIColor colorWithRed:1.00 green:1.00 blue:1.00 alpha:1.0] CGColor];
 	Gray_ = [[UIColor colorWithRed:0.40 green:0.40 blue:0.40 alpha:1.0] CGColor];
 	Purple_ = [[UIColor colorWithRed:0.0 green:0.0 blue:0.7 alpha:1.0] CGColor];
 	Purplish_ = [[UIColor colorWithRed:0.4 green:0.4 blue:0.8 alpha:1.0] CGColor];
-	if (!kMaskForBlur) {
-		unsigned char MaskForBlurData[] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x01, 0x02, 0x00, 0x00, 0x01, 0x02, 0x01, 0x03, 0x00, 0x00, 0x00, 0x2F, 0x81, 0x4B, 0x13, 0x00, 0x00, 0x00, 0x06, 0x50, 0x4C, 0x54, 0x45, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xA5, 0xD9, 0x9F, 0xDD, 0x00, 0x00, 0x00, 0x01, 0x74, 0x52, 0x4E, 0x53, 0x00, 0x40, 0xE6, 0xD8, 0x66, 0x00, 0x00, 0x01, 0x3A, 0x49, 0x44, 0x41, 0x54, 0x68, 0xDE, 0xED, 0xD0, 0xB1, 0x0D, 0x15, 0x41, 0x0C, 0x00, 0x51, 0xAF, 0x1C, 0x38, 0x74, 0x09, 0x2E, 0x65, 0xE9, 0x6C, 0x29, 0x8D, 0x52, 0x28, 0x81, 0x90, 0x00, 0xF1, 0x89, 0x4F, 0x87, 0xF4, 0x42, 0x24, 0xB4, 0x13, 0xBF, 0x68, 0xE2, 0x7C, 0x1E, 0x7D, 0x8D, 0x57, 0xFB, 0x29, 0xBE, 0xBD, 0xC5, 0x3C, 0xC5, 0xF7, 0xB7, 0xE8, 0xA7, 0xF8, 0xF1, 0x16, 0xF5, 0x14, 0x3F, 0xDF, 0x22, 0x9F, 0xE2, 0xD7, 0x5B, 0xAC, 0xA7, 0xF8, 0x1D, 0xEF, 0x3E, 0xCF, 0xDE, 0xE0, 0x0E, 0xB9, 0x43, 0xEE, 0x90, 0x3B, 0xE4, 0x0E, 0xF9, 0x1F, 0x87, 0x34, 0x87, 0x14, 0x87, 0x24, 0x87, 0x2C, 0x0F, 0xF9, 0x70, 0xC8, 0xE1, 0x90, 0xCD, 0x21, 0x73, 0x87, 0xDC, 0x21, 0x77, 0xC8, 0x1D, 0x72, 0x87, 0xDC, 0x21, 0x77, 0xC8, 0x1D, 0x72, 0x87, 0xDC, 0x21, 0xFF, 0x7E, 0xC8, 0x5F, 0xC4, 0x50, 0x34, 0x45, 0x51, 0x24, 0xC5, 0xA2, 0x08, 0x8B, 0x43, 0xB1, 0x29, 0x86, 0xA2, 0x29, 0x8A, 0x22, 0x29, 0x16, 0x45, 0x58, 0x1C, 0x8A, 0x4D, 0x31, 0x14, 0x4D, 0x51, 0x14, 0x49, 0xB1, 0x28, 0xC2, 0xE2, 0x50, 0x6C, 0x8A, 0xA1, 0x68, 0x8A, 0xA2, 0x48, 0x8A, 0x45, 0x11, 0x16, 0x87, 0x62, 0x53, 0x0C, 0x45, 0x53, 0x14, 0x45, 0x52, 0x2C, 0x8A, 0xB0, 0x38, 0x14, 0x9B, 0x62, 0x28, 0x9A, 0xA2, 0x28, 0x92, 0x62, 0x51, 0x84, 0xC5, 0xA1, 0xD8, 0x14, 0x43, 0xD1, 0x14, 0x45, 0x91, 0x14, 0x8B, 0x22, 0x2C, 0x0E, 0xC5, 0xA6, 0x18, 0x8A, 0xA6, 0x28, 0x8A, 0xA4, 0x58, 0x14, 0x61, 0x71, 0x28, 0x36, 0xC5, 0x50, 0x34, 0x45, 0x51, 0x24, 0xC5, 0xA2, 0x08, 0x8B, 0x43, 0xB1, 0x29, 0x86, 0xA2, 0x29, 0x8A, 0x22, 0x29, 0x16, 0x45, 0x58, 0x1C, 0x8A, 0x4D, 0x31, 0x14, 0x4D, 0x51, 0x14, 0x49, 0xB1, 0x28, 0xC2, 0xE2, 0x50, 0x6C, 0x8A, 0xA1, 0x68, 0x8A, 0xA2, 0x48, 0x8A, 0x45, 0x11, 0x16, 0x87, 0x62, 0x53, 0x0C, 0x45, 0x53, 0x14, 0x45, 0x52, 0x2C, 0x8A, 0xB0, 0x38, 0x14, 0x9B, 0x62, 0x28, 0x9A, 0xA2, 0x28, 0x92, 0x62, 0x51, 0x84, 0xC5, 0xA1, 0xD8, 0x14, 0x43, 0xD1, 0x14, 0x45, 0x91, 0x14, 0x8B, 0x22, 0x2C, 0xBE, 0xFC, 0x01, 0x47, 0x65, 0xB7, 0x95, 0x7A, 0xFA, 0xDB, 0x98, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82 };
-		kMaskForBlur = [[UIImage imageWithData:[NSData dataWithBytes:MaskForBlurData length:sizeof(MaskForBlurData)]] copy];
-	}
+	
+	kNew = [[NSBundle mainBundle] localizedStringForKey:@"NEW" value:@"New" table:nil];
+	kUpdate = [[NSBundle mainBundle] localizedStringForKey:@"UPGRADE" value:@"Upgrade" table:nil];
+	kInstall = [[NSBundle mainBundle] localizedStringForKey:@"INSTALL" value:@"Install" table:nil];
+	kRemove = [[NSBundle mainBundle] localizedStringForKey:@"REMOVE" value:@"Remove" table:nil];
+	kNewAt = [[[NSBundle mainBundle] localizedStringForKey:@"NEW_AT" value:nil table:nil]?:@"" stringByReplacingOccurrencesOfString:@"%@" withString:@""];
+	
+	
+	unsigned char MaskForBlurData[] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x01, 0x02, 0x00, 0x00, 0x01, 0x02, 0x01, 0x03, 0x00, 0x00, 0x00, 0x2F, 0x81, 0x4B, 0x13, 0x00, 0x00, 0x00, 0x06, 0x50, 0x4C, 0x54, 0x45, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xA5, 0xD9, 0x9F, 0xDD, 0x00, 0x00, 0x00, 0x01, 0x74, 0x52, 0x4E, 0x53, 0x00, 0x40, 0xE6, 0xD8, 0x66, 0x00, 0x00, 0x01, 0x3A, 0x49, 0x44, 0x41, 0x54, 0x68, 0xDE, 0xED, 0xD0, 0xB1, 0x0D, 0x15, 0x41, 0x0C, 0x00, 0x51, 0xAF, 0x1C, 0x38, 0x74, 0x09, 0x2E, 0x65, 0xE9, 0x6C, 0x29, 0x8D, 0x52, 0x28, 0x81, 0x90, 0x00, 0xF1, 0x89, 0x4F, 0x87, 0xF4, 0x42, 0x24, 0xB4, 0x13, 0xBF, 0x68, 0xE2, 0x7C, 0x1E, 0x7D, 0x8D, 0x57, 0xFB, 0x29, 0xBE, 0xBD, 0xC5, 0x3C, 0xC5, 0xF7, 0xB7, 0xE8, 0xA7, 0xF8, 0xF1, 0x16, 0xF5, 0x14, 0x3F, 0xDF, 0x22, 0x9F, 0xE2, 0xD7, 0x5B, 0xAC, 0xA7, 0xF8, 0x1D, 0xEF, 0x3E, 0xCF, 0xDE, 0xE0, 0x0E, 0xB9, 0x43, 0xEE, 0x90, 0x3B, 0xE4, 0x0E, 0xF9, 0x1F, 0x87, 0x34, 0x87, 0x14, 0x87, 0x24, 0x87, 0x2C, 0x0F, 0xF9, 0x70, 0xC8, 0xE1, 0x90, 0xCD, 0x21, 0x73, 0x87, 0xDC, 0x21, 0x77, 0xC8, 0x1D, 0x72, 0x87, 0xDC, 0x21, 0x77, 0xC8, 0x1D, 0x72, 0x87, 0xDC, 0x21, 0xFF, 0x7E, 0xC8, 0x5F, 0xC4, 0x50, 0x34, 0x45, 0x51, 0x24, 0xC5, 0xA2, 0x08, 0x8B, 0x43, 0xB1, 0x29, 0x86, 0xA2, 0x29, 0x8A, 0x22, 0x29, 0x16, 0x45, 0x58, 0x1C, 0x8A, 0x4D, 0x31, 0x14, 0x4D, 0x51, 0x14, 0x49, 0xB1, 0x28, 0xC2, 0xE2, 0x50, 0x6C, 0x8A, 0xA1, 0x68, 0x8A, 0xA2, 0x48, 0x8A, 0x45, 0x11, 0x16, 0x87, 0x62, 0x53, 0x0C, 0x45, 0x53, 0x14, 0x45, 0x52, 0x2C, 0x8A, 0xB0, 0x38, 0x14, 0x9B, 0x62, 0x28, 0x9A, 0xA2, 0x28, 0x92, 0x62, 0x51, 0x84, 0xC5, 0xA1, 0xD8, 0x14, 0x43, 0xD1, 0x14, 0x45, 0x91, 0x14, 0x8B, 0x22, 0x2C, 0x0E, 0xC5, 0xA6, 0x18, 0x8A, 0xA6, 0x28, 0x8A, 0xA4, 0x58, 0x14, 0x61, 0x71, 0x28, 0x36, 0xC5, 0x50, 0x34, 0x45, 0x51, 0x24, 0xC5, 0xA2, 0x08, 0x8B, 0x43, 0xB1, 0x29, 0x86, 0xA2, 0x29, 0x8A, 0x22, 0x29, 0x16, 0x45, 0x58, 0x1C, 0x8A, 0x4D, 0x31, 0x14, 0x4D, 0x51, 0x14, 0x49, 0xB1, 0x28, 0xC2, 0xE2, 0x50, 0x6C, 0x8A, 0xA1, 0x68, 0x8A, 0xA2, 0x48, 0x8A, 0x45, 0x11, 0x16, 0x87, 0x62, 0x53, 0x0C, 0x45, 0x53, 0x14, 0x45, 0x52, 0x2C, 0x8A, 0xB0, 0x38, 0x14, 0x9B, 0x62, 0x28, 0x9A, 0xA2, 0x28, 0x92, 0x62, 0x51, 0x84, 0xC5, 0xA1, 0xD8, 0x14, 0x43, 0xD1, 0x14, 0x45, 0x91, 0x14, 0x8B, 0x22, 0x2C, 0xBE, 0xFC, 0x01, 0x47, 0x65, 0xB7, 0x95, 0x7A, 0xFA, 0xDB, 0x98, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82 };
+	UIImage* kMaskForBlur = [[UIImage imageWithData:[NSData dataWithBytes:MaskForBlurData length:sizeof(MaskForBlurData)]] copy];
+	
+	CGImageRef maskRef = kMaskForBlur.CGImage;
+	CGBitmapInfo bitmapInfo = kCGImageAlphaNone;
+	CGColorRenderingIntent renderingIntent = kCGRenderingIntentDefault;
+	kMask = CGImageCreate(CGImageGetWidth(maskRef),
+				CGImageGetHeight(maskRef),
+				CGImageGetBitsPerComponent(maskRef),
+				CGImageGetBitsPerPixel(maskRef),
+				CGImageGetBytesPerRow(maskRef),
+				CGColorSpaceCreateDeviceGray(),
+				bitmapInfo,
+				CGImageGetDataProvider(maskRef),
+				nil, NO,
+				renderingIntent);
+				
 	%init;
 }
